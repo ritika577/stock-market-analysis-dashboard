@@ -4,3 +4,5 @@ google-auth-httplib2==0.1.1
 google-api-python-client==2.108.0
 pandas==1.5.3
 numpy==1.24.3
+streamlit
+plotly
