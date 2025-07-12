@@ -92,78 +92,97 @@ def fetch_stock_data():
 
 # --- Push to Google Sheet with cleanup ---
 def update_google_sheet(df):
-    print("📤 Cleaning & updating Google Sheet...")
+    print("📤 Starting Google Sheet update...")
+
     service = get_gsheet_service()
     sheet = service.spreadsheets()
 
-    # Step 1: Get current data from Google Sheet
-    result = sheet.values().get(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{SHEET_NAME}!A1:Z10000"
-    ).execute()
+    # --- Step 1: Get existing data ---
+    try:
+        result = sheet.values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{SHEET_NAME}!A1:Z10000"
+        ).execute()
+        values = result.get('values', [])
+    except Exception as e:
+        print(f"❌ Failed to fetch existing sheet data: {e}")
+        return
 
-    values = result.get('values', [])
-    cleaned_data = []
+    headers = df.columns.tolist()
+    existing_data = values[1:] if values else []
+    final_rows = []
+    removed_old = 0
+    removed_na = 0
+
     cutoff = datetime.now() - timedelta(days=7)
 
+    # --- Step 2: Clean old existing data ---
     if values:
-        headers = values[0]
-        existing_data = values[1:]
-
         try:
-            datetime_index = headers.index('Datetime')
-            price_indices = [headers.index(col) for col in ['Open', 'High', 'Low', 'Close', 'Volume']]
-        except ValueError:
-            print("❌ Required columns not found.")
+            headers = values[0]
+            datetime_idx = headers.index('Datetime')
+            price_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+            price_indices = [headers.index(col) for col in price_cols]
+        except ValueError as e:
+            print(f"❌ Missing expected columns in header: {e}")
             return
 
         for row in existing_data:
             try:
-                if len(row) <= datetime_index:
+                if len(row) <= datetime_idx:
                     continue
-                row_date = dateutil.parser.parse(row[datetime_index])
-                if row_date >= cutoff:
-                    # Keep row if it's within 7 days regardless of partial 'N/A'
-                    cleaned_data.append(row)
-                else:
-                    print(f"🗑️ Removed (too old): {row}")
+                row_date = dateutil.parser.parse(row[datetime_idx])
+                if row_date < cutoff:
+                    removed_old += 1
+                    continue
+                if any(row[i] == 'N/A' for i in price_indices if i < len(row)):
+                    removed_na += 1
+                    continue
+                final_rows.append(row)
             except Exception as e:
-                print(f"❌ Parse error for row: {row} → {e}")
+                print(f"⚠️ Error parsing row: {row} → {e}")
     else:
-        headers = df.columns.tolist()
+        print("🆕 No existing data. Starting fresh.")
 
-    # Step 2: Clean new data
+    # --- Step 3: Clean new data ---
     try:
         df['Datetime'] = pd.to_datetime(df['Datetime'], errors='coerce')
         df = df.dropna(subset=['Datetime'])
         df = df[df['Datetime'] >= cutoff]
+        df = df[~df[['Open', 'High', 'Low', 'Close', 'Volume']].isin(['N/A']).any(axis=1)]
     except Exception as e:
-        print(f"❌ Failed cleaning new data: {e}")
+        print(f"❌ Error cleaning new data: {e}")
         return
 
-    if df.empty and not cleaned_data:
-        print("⚠️ No data to update.")
+    if df.empty and not final_rows:
+        print("⚠️ No valid data to write. Skipping update.")
         return
 
-    # Step 3: Format and upload
-    df = df.astype(str)
-    new_rows = df.values.tolist()
-    final_data = [headers] + cleaned_data + new_rows
+    new_data_rows = df.astype(str).values.tolist()
+    final_data = [headers] + final_rows + new_data_rows
 
-    # Clear and write fresh data
-    sheet.values().clear(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{SHEET_NAME}!A1:Z10000"
-    ).execute()
+    # --- Step 4: Clear and update sheet ---
+    try:
+        sheet.values().clear(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{SHEET_NAME}!A1:Z10000"
+        ).execute()
 
-    sheet.values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{SHEET_NAME}!A1",
-        valueInputOption='RAW',
-        body={'values': final_data}
-    ).execute()
+        sheet.values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{SHEET_NAME}!A1",
+            valueInputOption='RAW',
+            body={'values': final_data}
+        ).execute()
 
-    print(f"✅ Sheet updated: {len(cleaned_data)} old rows kept, {len(new_rows)} new rows added.")
+        print(f"✅ Sheet updated:")
+        print(f"   • {len(final_rows)} valid old rows kept")
+        print(f"   • {len(new_data_rows)} new rows added")
+        print(f"   • {removed_old} old rows removed (>7 days)")
+        print(f"   • {removed_na} rows with 'N/A' removed")
+    except Exception as e:
+        print(f"❌ Failed to update Google Sheet: {e}")
+
 
 # --- MAIN ---
 if __name__ == "__main__":
