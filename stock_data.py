@@ -43,25 +43,45 @@ def fetch_stock_data():
 
     for ticker in tickers_list:
         try:
-            df = yf.download(
-                tickers=ticker,
-                period='5d',
-                interval='15m',
-                progress=False,
-                threads=False
-            ).dropna()
-
-            # Fallback to 1h if 15m fails
-            if df.empty:
+            print(f"Fetching data for {ticker}...")
+            
+            # First attempt with 15m interval
+            try:
                 df = yf.download(
                     tickers=ticker,
                     period='5d',
-                    interval='1h',
+                    interval='15m',
                     progress=False,
                     threads=False
-                ).dropna()
-                if df.empty:
-                    raise Exception("No data even after fallback.")
+                )
+                
+                if not df.empty:
+                    df = df.dropna()
+                    print(f"✓ Fetched 15m data for {ticker} ({len(df)} rows)")
+                else:
+                    print(f"! No 15m data for {ticker}, trying 1h...")
+                    raise Exception("No 15m data")
+                    
+            except Exception as e:
+                # Fallback to 1h interval
+                try:
+                    df = yf.download(
+                        tickers=ticker,
+                        period='5d',
+                        interval='1h',
+                        progress=False,
+                        threads=False
+                    )
+                    
+                    if not df.empty:
+                        df = df.dropna()
+                        print(f"✓ Fetched 1h data for {ticker} ({len(df)} rows)")
+                    else:
+                        raise Exception("No data available")
+                        
+                except Exception as inner_e:
+                    print(f"✗ Failed to fetch {ticker}: {str(inner_e)}")
+                    raise
 
             latest = df.iloc[-1]
 
@@ -77,7 +97,7 @@ def fetch_stock_data():
             })
 
         except Exception as e:
-            print(f"⚠️ Error fetching {ticker}: {e}")
+            print(f"✗ Error fetching {ticker}: {e}")
             results.append({
                 'Ticker': ticker,
                 'Company': ticker_to_company.get(ticker, 'Unknown'),
@@ -97,12 +117,14 @@ def fetch_stock_data():
 
 # --- Push to Google Sheet with cleanup ---
 def update_google_sheet(df):
-    print("📤 Starting Google Sheet update...")
+    print("\nUpdating Google Sheet...")
+    print(f"Data to update: {len(df)} rows")
 
     service = get_gsheet_service()
     sheet = service.spreadsheets()
 
-    # --- Step 1: Get existing data ---
+    # Get existing data
+    print("Fetching existing data from sheet...")
     try:
         result = sheet.values().get(
             spreadsheetId=SPREADSHEET_ID,
@@ -110,7 +132,7 @@ def update_google_sheet(df):
         ).execute()
         values = result.get('values', [])
     except Exception as e:
-        print(f"❌ Failed to fetch existing sheet data: {e}")
+        print(f"✗ Failed to fetch sheet data: {e}")
         return
 
     headers = df.columns.tolist()
@@ -121,7 +143,8 @@ def update_google_sheet(df):
 
     cutoff = datetime.now() - timedelta(days=7)
 
-    # --- Step 2: Clean old existing data ---
+    # Process existing data
+    print(f"Processing {len(existing_data)} existing rows...")
     if values:
         try:
             headers = values[0]
@@ -145,28 +168,31 @@ def update_google_sheet(df):
                     continue
                 final_rows.append(row)
             except Exception as e:
-                print(f"⚠️ Error parsing row: {row} → {e}")
+                print(f"! Error parsing row: {e}")
     else:
         print("🆕 No existing data. Starting fresh.")
 
-    # --- Step 3: Clean new data ---
+    # Clean new data
+    print("Cleaning new data...")
     try:
         df['Datetime'] = pd.to_datetime(df['Datetime'], errors='coerce')
         df = df.dropna(subset=['Datetime'])
         df = df[df['Datetime'] >= cutoff]
         df = df[~df[['Open', 'High', 'Low', 'Close', 'Volume']].isin(['N/A']).any(axis=1)]
     except Exception as e:
-        print(f"❌ Error cleaning new data: {e}")
+        print(f"✗ Error cleaning data: {e}")
         return
 
     if df.empty and not final_rows:
-        print("⚠️ No valid data to write. Skipping update.")
+        print("! No valid data to update")
         return
 
+    # Prepare final data
     new_data_rows = df.astype(str).values.tolist()
     final_data = [headers] + final_rows + new_data_rows
 
-    # --- Step 4: Clear and update sheet ---
+    # Update sheet
+    print("\nUpdating sheet...")
     try:
         sheet.values().clear(
             spreadsheetId=SPREADSHEET_ID,
@@ -180,19 +206,33 @@ def update_google_sheet(df):
             body={'values': final_data}
         ).execute()
 
-        print(f"✅ Sheet updated:")
-        print(f"   • {len(final_rows)} valid old rows kept")
-        print(f"   • {len(new_data_rows)} new rows added")
-        print(f"   • {removed_old} old rows removed (>7 days)")
-        print(f"   • {removed_na} rows with 'N/A' removed")
+        print("\n✓ Update complete!")
+        print(f"• {len(final_rows)} existing rows kept")
+        print(f"• {len(new_data_rows)} new rows added")
+        print(f"• {removed_old} old rows removed")
+        print(f"• {removed_na} invalid rows skipped")
     except Exception as e:
-        print(f"❌ Failed to update Google Sheet: {e}")
+        print(f"✗ Failed to update sheet: {e}")
 
 
 # --- MAIN ---
 if __name__ == "__main__":
-    df = fetch_stock_data()
-    print(df)
+    print("=== Stock Data Updater ===\n")
+    start_time = time.time()
+    
+    try:
+        df = fetch_stock_data()
+        print(f"\nFetched data for {len(df)} tickers")
+        
+        if not df.empty:
+            update_google_sheet(df)
+        else:
+            print("! No data to update")
+            
+    except Exception as e:
+        print(f"\n✗ Fatal error: {e}")
+    
+    print(f"\nDone in {time.time() - start_time:.1f} seconds")
 
     if not df.empty:
         update_google_sheet(df)
