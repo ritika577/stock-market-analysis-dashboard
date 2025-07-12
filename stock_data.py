@@ -41,54 +41,59 @@ def fetch_stock_data():
     results = []
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    for batch in chunked(tickers_list, 25):
+    for ticker in tickers_list:
         try:
-            data = yf.download(
-                tickers=batch,
+            df = yf.download(
+                tickers=ticker,
                 period='5d',
                 interval='15m',
-                group_by='ticker',
                 progress=False,
                 threads=False
-            )
-        except Exception as e:
-            print(f"❌ Batch error: {e}")
-            continue
+            ).dropna()
 
-        for ticker in batch:
-            try:
-                df = data[ticker] if len(batch) > 1 else data
-                df = df.dropna()
+            # Fallback to 1h if 15m fails
+            if df.empty:
+                df = yf.download(
+                    tickers=ticker,
+                    period='5d',
+                    interval='1h',
+                    progress=False,
+                    threads=False
+                ).dropna()
                 if df.empty:
-                    raise ValueError("No data received.")
-                latest = df.iloc[-1]
+                    raise Exception("No data even after fallback.")
 
-                results.append({
-                    'Ticker': ticker,
-                    'Company': ticker_to_company[ticker],
-                    'Datetime': now,
-                    'Open': round(latest['Open'], 2),
-                    'High': round(latest['High'], 2),
-                    'Low': round(latest['Low'], 2),
-                    'Close': round(latest['Close'], 2),
-                    'Volume': int(latest['Volume'])
-                })
-            except Exception as e:
-                print(f"⚠️ Error fetching {ticker}: {e}")
-                results.append({
-                    'Ticker': ticker,
-                    'Company': ticker_to_company.get(ticker, 'Unknown'),
-                    'Datetime': now,
-                    'Open': 'N/A',
-                    'High': 'N/A',
-                    'Low': 'N/A',
-                    'Close': 'N/A',
-                    'Volume': 'N/A'
-                })
+            latest = df.iloc[-1]
 
-        time.sleep(5)
+            results.append({
+                'Ticker': ticker,
+                'Company': ticker_to_company[ticker],
+                'Datetime': now,
+                'Open': round(float(latest['Open']), 2),
+                'High': round(float(latest['High']), 2),
+                'Low': round(float(latest['Low']), 2),
+                'Close': round(float(latest['Close']), 2),
+                'Volume': int(latest['Volume'])
+            })
+
+        except Exception as e:
+            print(f"⚠️ Error fetching {ticker}: {e}")
+            results.append({
+                'Ticker': ticker,
+                'Company': ticker_to_company.get(ticker, 'Unknown'),
+                'Datetime': now,
+                'Open': 'N/A',
+                'High': 'N/A',
+                'Low': 'N/A',
+                'Close': 'N/A',
+                'Volume': 'N/A'
+            })
+
+        time.sleep(0.5)  # reduce load
 
     return pd.DataFrame(results)
+
+
 
 # --- Push to Google Sheet with cleanup ---
 def update_google_sheet(df):
