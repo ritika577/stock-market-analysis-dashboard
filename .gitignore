@@ -1,0 +1,22 @@
+# Sensitive data
+credentials.json
+
+# Virtual Environment
+venv/
+venv311/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local development
+*.log
+.env
+.env.local
