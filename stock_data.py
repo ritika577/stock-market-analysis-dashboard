@@ -35,7 +35,7 @@ def chunked(iterable, size):
 
 # --- Fetch latest stock data ---
 def fetch_stock_data():
-    companies_df = get_sp500_companies(100)
+    companies_df = get_sp500_companies(500)
     tickers_list = companies_df['Ticker'].tolist()
     ticker_to_company = dict(zip(companies_df['Ticker'], companies_df['Company']))
 
