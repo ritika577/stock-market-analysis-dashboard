@@ -35,7 +35,7 @@ def chunked(iterable, size):
 
 # --- Fetch latest stock data ---
 def fetch_stock_data():
-    companies_df = get_sp500_companies(500)
+    companies_df = get_sp500_companies(100)
     tickers_list = companies_df['Ticker'].tolist()
     ticker_to_company = dict(zip(companies_df['Ticker'], companies_df['Company']))
 
@@ -97,53 +97,67 @@ def update_google_sheet(df):
     service = get_gsheet_service()
     sheet = service.spreadsheets()
 
-    # Step 1: Read current sheet
+    # Step 1: Get current data from Google Sheet
     result = sheet.values().get(
         spreadsheetId=SPREADSHEET_ID,
         range=f"{SHEET_NAME}!A1:Z10000"
     ).execute()
 
     values = result.get('values', [])
-    if not values:
-        print("🆕 Sheet is empty. Adding headers and data.")
-        final_data = [df.columns.tolist()] + df.values.tolist()
-    else:
+    cleaned_data = []
+
+    # Step 2: Determine header and clean old data
+    if values:
         headers = values[0]
         existing_data = values[1:]
 
-        # Identify 'Datetime' column
         try:
             datetime_index = headers.index('Datetime')
         except ValueError:
-            print("❌ 'Datetime' column not found.")
+            print("❌ 'Datetime' column not found in existing sheet.")
             return
 
-        # Filter out old rows (> 30 days)
-        cutoff_date = datetime.now() - timedelta(days=7)
-        cleaned_data = []
+        cutoff = datetime.now() - timedelta(days=7)
 
         for row in existing_data:
             try:
                 if len(row) <= datetime_index:
                     continue
                 row_date = dateutil.parser.parse(row[datetime_index])
-                if row_date >= cutoff_date:
+                if row_date >= cutoff and all(cell != 'N/A' for cell in row):
                     cleaned_data.append(row)
                 else:
-                    print(f"🗑️ Skipped (old): {row}")
+                    print(f"🗑️ Removed (invalid or old): {row}")
             except Exception as e:
-                print(f"❌ Parse error: {row} → {e}")
+                print(f"❌ Parse error for row {row}: {e}")
 
-        new_data = df.values.tolist()
-        final_data = [headers] + cleaned_data + new_data
+    else:
+        headers = df.columns.tolist()
 
-    # ✅ Step 2: Clear entire sheet
+    # Step 3: Clean current DataFrame (new data)
+    try:
+        df['Datetime'] = pd.to_datetime(df['Datetime'], errors='coerce')
+        df = df.dropna(subset=['Datetime'])  # remove rows with bad datetime
+        df = df[df['Datetime'] >= datetime.now() - timedelta(days=7)]
+    except Exception as e:
+        print(f"❌ Failed cleaning new data: {e}")
+        return
+
+    if df.empty and not cleaned_data:
+        print("⚠️ Nothing valid to update.")
+        return
+
+    # Step 4: Format data for Google Sheets (strings)
+    df = df.astype(str)
+    new_rows = df.values.tolist()
+    final_data = [headers] + cleaned_data + new_rows
+
+    # Step 5: Clear old and upload new
     sheet.values().clear(
         spreadsheetId=SPREADSHEET_ID,
         range=f"{SHEET_NAME}!A1:Z10000"
     ).execute()
 
-    # ✅ Step 3: Write cleaned + new data
     sheet.values().update(
         spreadsheetId=SPREADSHEET_ID,
         range=f"{SHEET_NAME}!A1",
@@ -151,8 +165,7 @@ def update_google_sheet(df):
         body={'values': final_data}
     ).execute()
 
-    print(f"✅ Sheet updated: {len(cleaned_data)} rows kept, {len(df)} new rows added.")
-
+    print(f"✅ Updated: {len(cleaned_data)} old rows kept, {len(new_rows)} new rows added.")
 
 
 
