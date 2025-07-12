@@ -5,3 +5,5 @@ google-api-python-client==2.108.0
 pandas==1.5.3
 numpy==1.24.3
 python-dateutil==2.8.2
+streamlit
+plotly
