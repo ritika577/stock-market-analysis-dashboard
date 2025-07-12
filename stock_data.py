@@ -1,27 +1,23 @@
 import yfinance as yf
 import pandas as pd
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import islice
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+import dateutil.parser
 
-def get_sp500_companies(limit=500):
+# --- Get S&P 500 companies from Wikipedia ---
+def get_sp500_companies(limit=100):
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
     tables = pd.read_html(url)
-    df = tables[0]  # First table contains the data
-
-    # Rename columns for clarity
+    df = tables[0]
     df = df[['Symbol', 'Security']]
     df.columns = ['Ticker', 'Company']
-
-    # Replace BRK.B with BRK-B (for Yahoo Finance)
     df['Ticker'] = df['Ticker'].apply(lambda x: x.replace('.', '-'))
-
-    # Limit to first `n` companies
     return df.head(limit)
 
-
+# --- Google Sheets Config ---
 SPREADSHEET_ID = '1mZATyrCQsWqMf-Cc_Zfdr73PRbbhGRMFRw3tr9_u7MA'
 SHEET_NAME = 'Live Stock Data'
 CREDENTIALS_FILE = 'credentials.json'
@@ -91,37 +87,75 @@ def fetch_stock_data():
                     'Volume': 'N/A'
                 })
 
-        time.sleep(5)  # Respect Yahoo Finance rate limit
+        time.sleep(5)
 
     return pd.DataFrame(results)
 
-# --- Push to Google Sheet ---
+# --- Push to Google Sheet with old data removal ---
 def update_google_sheet(df):
-    print("\U0001F4E4 Updating Google Sheet...")
+    print("📤 Cleaning & updating Google Sheet...")
     service = get_gsheet_service()
     sheet = service.spreadsheets()
 
-    clear_range = f"{SHEET_NAME}!A1:Z1000"   # No quotes in .clear()
-    update_range = f"'{SHEET_NAME}'!A1"      # Quotes required in .update()
+    # Step 1: Read current sheet
+    result = sheet.values().get(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{SHEET_NAME}!A1:Z10000"
+    ).execute()
 
-    # Clear existing
+    values = result.get('values', [])
+    if not values:
+        print("🆕 Sheet is empty. Adding headers and data.")
+        final_data = [df.columns.tolist()] + df.values.tolist()
+    else:
+        headers = values[0]
+        existing_data = values[1:]
+
+        # Identify 'Datetime' column
+        try:
+            datetime_index = headers.index('Datetime')
+        except ValueError:
+            print("❌ 'Datetime' column not found.")
+            return
+
+        # Filter out old rows (> 30 days)
+        cutoff_date = datetime.now() - timedelta(days=7)
+        cleaned_data = []
+
+        for row in existing_data:
+            try:
+                if len(row) <= datetime_index:
+                    continue
+                row_date = dateutil.parser.parse(row[datetime_index])
+                if row_date >= cutoff_date:
+                    cleaned_data.append(row)
+                else:
+                    print(f"🗑️ Skipped (old): {row}")
+            except Exception as e:
+                print(f"❌ Parse error: {row} → {e}")
+
+        new_data = df.values.tolist()
+        final_data = [headers] + cleaned_data + new_data
+
+    # ✅ Step 2: Clear entire sheet
     sheet.values().clear(
         spreadsheetId=SPREADSHEET_ID,
-        range=clear_range
+        range=f"{SHEET_NAME}!A1:Z10000"
     ).execute()
 
-    # Prepare data
-    values = [df.columns.tolist()] + df.values.tolist()
-
-    # Update sheet
+    # ✅ Step 3: Write cleaned + new data
     sheet.values().update(
         spreadsheetId=SPREADSHEET_ID,
-        range=update_range,
+        range=f"{SHEET_NAME}!A1",
         valueInputOption='RAW',
-        body={'values': values}
+        body={'values': final_data}
     ).execute()
 
-    print("\u2705 Google Sheet updated successfully!")
+    print(f"✅ Sheet updated: {len(cleaned_data)} rows kept, {len(df)} new rows added.")
+
+
+
+
 
 # --- MAIN ---
 if __name__ == "__main__":
@@ -131,4 +165,4 @@ if __name__ == "__main__":
     if not df.empty:
         update_google_sheet(df)
     else:
-        print("\u274C No valid data to upload.")
+        print("❌ No valid data to upload.")
