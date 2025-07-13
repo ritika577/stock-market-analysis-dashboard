@@ -27,18 +27,17 @@ CREDENTIALS_FILE = 'credentials.json'
 # --- Authenticate with Google Sheets ---
 def get_gsheet_service():
     scopes = ['https://www.googleapis.com/auth/spreadsheets']
-    encoded = os.getenv("GSHEET_CREDS_BASE64")
+    raw_json = os.getenv("GSHEET_CREDS_JSON")
 
-    if not encoded:
-        raise RuntimeError("❌ Environment variable 'GSHEET_CREDS_BASE64' is not set.")
+    if not raw_json:
+        raise RuntimeError("❌ Environment variable 'GSHEET_CREDS_JSON' is not set.")
 
     try:
-        json_bytes = base64.b64decode(encoded)
-        creds_dict = json.loads(json_bytes.decode('utf-8'))
+        creds_dict = json.loads(raw_json)
         creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return build('sheets', 'v4', credentials=creds)
     except Exception as e:
-        raise RuntimeError(f"❌ Failed to decode credentials: {e}")
+        raise RuntimeError(f"❌ Failed to parse credentials: {e}")
 
 # --- Utility to batch tickers ---
 def chunked(iterable, size):
