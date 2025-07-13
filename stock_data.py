@@ -61,7 +61,7 @@ def fetch_stock_data():
             try:
                 df = yf.download(
                     tickers=ticker,
-                    period='5d',
+                    period='1d',
                     interval='15m',
                     progress=False,
                     threads=False
@@ -79,8 +79,8 @@ def fetch_stock_data():
                 try:
                     df = yf.download(
                         tickers=ticker,
-                        period='5d',
-                        interval='1h',
+                        period='1d',
+                        interval='2m',
                         progress=False,
                         threads=False
                     )

@@ -2,7 +2,7 @@ name: ⏰ Daily Stock Sheet Update
 
 on:
   schedule:
-    - cron: '*/15 * * * *'   # Every 30 minutes (UTC)
+    - cron: '*/2 * * * *'   # Every 30 minutes (UTC)
   workflow_dispatch:
 
 jobs:
