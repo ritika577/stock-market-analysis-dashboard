@@ -80,7 +80,7 @@ def fetch_stock_data():
                     df = yf.download(
                         tickers=ticker,
                         period='1d',
-                        interval='2m',
+                        interval='15m',
                         progress=False,
                         threads=False
                     )
