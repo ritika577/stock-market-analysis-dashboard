@@ -144,7 +144,7 @@ def update_google_sheet(df):
         df['Datetime'] = pd.to_datetime(df['Datetime'], errors='coerce')
 
         # 👇 Cutoff set to 1 minute ago (for testing purposes)
-        cutoff = datetime.now() - timedelta(days=7)
+        cutoff = datetime.now() - timedelta(days=4)
         print(f"⏱️ Cutoff time: {cutoff}")
 
         df = df[df['Datetime'] >= cutoff]
